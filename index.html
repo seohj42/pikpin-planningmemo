@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>여행 플랜 메모장</title>
+
+    <!-- p5.js 라이브러리 -->
+    <script src="https://cdn.jsdelivr.net/npm/p5@2/lib/p5.min.js"></script>
+    <link rel="stylesheet" href="style.css?v=8" />
+    <style>
+      .transport-options {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 5px;
+        margin-top: 8px;
+      }
+      .transport-option {
+        min-width: 0;
+        min-height: 58px;
+        padding: 7px 2px;
+        border: 1px solid #d9dde3;
+        border-radius: 12px;
+        background: #fff;
+        color: #454b55;
+        font: inherit;
+        font-size: 15px;
+        cursor: pointer;
+      }
+      .transport-option .transport-icon {
+        display: block;
+        margin-bottom: 3px;
+        font-size: 19px;
+      }
+      .transport-option.active {
+        border: 2px solid #656d78;
+        background: #e9edf2;
+        color: #252a31;
+        box-shadow: 0 0 0 1px #656d78 inset;
+        font-weight: 700;
+      }
+      .transport-custom-input {
+        margin-top: 15px;
+      }
+      .transport-custom-input[hidden] {
+        display: none;
+      }
+      @media (max-width: 360px) {
+        .transport-options {
+          gap: 3px;
+        }
+        .transport-option {
+          padding-inline: 1px;
+          font-size: 10px;
+        }
+        .transport-option .transport-icon {
+          font-size: 17px;
+        }
+      }
+    </style>
+    <script>
+      window.googleMapsRoutesReady = new Promise((resolve, reject) => {
+        window.initializeGoogleMapsRoutes = async () => {
+          try {
+            resolve(await google.maps.importLibrary("routes"));
+          } catch (error) {
+            reject(error);
+          }
+        };
+        const mapsScript = document.createElement("script");
+        mapsScript.src =
+          "https://maps.googleapis.com/maps/api/js?key=AIzaSyBOTiwiXA4_9vaF2dnF4ATE8TbvOm6iqkI&loading=async&callback=initializeGoogleMapsRoutes&v=weekly";
+        mapsScript.async = true;
+        mapsScript.onerror = () =>
+          reject(new Error("Google Maps 기능을 불러오지 못했습니다."));
+        document.head.appendChild(mapsScript);
+      });
+    </script>
+  </head>
+  <body>
+    <!-- 커스텀 배경 레이어 -->
+    <div class="screen-bg">
+      <div class="glow"></div>
+      <div class="glow-bottom"></div>
+    </div>
+
+    <!-- 상단 UI 영역 -->
+    <div id="top-ui">
+      <!-- 메인 제목 / 부제목 (수정 9: Glassmorphism 적용, '기준 장소' 버튼 삭제) -->
+      <header id="main-header">
+        <div
+          class="title-box"
+          id="title-box-btn"
+          onclick="startTitleEdit()"
+          title="클릭하여 여행 제목/부제목 수정"
+        >
+          <div class="title-text-group">
+            <h1 id="header-main-title">나의 여행 (1)</h1>
+            <p id="header-sub-title">부제목을 설정할 수 있습니다.</p>
+          </div>
+        </div>
+      </header>
+
+      <!-- 1줄: Day 선택(왼쪽) + 핀 추가 버튼(오른쪽) (수정 5: 선 연결 레이어 포함) -->
+      <div class="schedule-row">
+        <div class="day-bar-wrapper">
+          <svg id="day-connecting-lines" class="day-connecting-lines"></svg>
+          <div class="day-bar" id="day-bar"></div>
+        </div>
+        <button id="btn-toggle-sidebar" onclick="toggleSidebar()">
+          + 핀 추가하기
+        </button>
+      </div>
+
+      <!-- 2줄: 카테고리 필터 행 -->
+      <div class="layer-bar" id="layer-bar"></div>
+    </div>
+
+    <!-- 우측 하단 컨트롤러 -->
+    <div id="bottom-controls">
+      <div id="view-mode-switch" role="group" aria-label="보기 방식 선택">
+        <button
+          id="btn-free-view"
+          class="view-mode-option active"
+          type="button"
+          aria-pressed="true"
+          onclick="setViewMode(false)"
+        >
+          자유 배치
+        </button>
+        <button
+          id="btn-distance-view"
+          class="view-mode-option"
+          type="button"
+          aria-pressed="false"
+          onclick="setViewMode(true)"
+        >
+          숙소 거리 원형
+        </button>
+      </div>
+      <div
+        id="distance-route-status"
+        class="distance-route-status"
+        role="status"
+        aria-live="polite"
+      ></div>
+      <small class="route-attribution">Powered by Google, © 2026</small>
+      <div id="zoom-controls">
+        <button class="zoom-btn" onclick="zoomIn()">+</button>
+        <button class="zoom-btn" onclick="zoomOut()">−</button>
+      </div>
+    </div>
+
+    <!-- 하단 코스 요약 및 타임라인 바 -->
+    <div id="summary-bar">
+      <div class="summary-content" id="summary-content"></div>
+    </div>
+
+    <div id="leg-editor-bar" aria-label="장소 사이 이동 정보">
+      <div class="leg-editor-heading">
+        <div>
+          <strong id="leg-editor-title">장소 사이 이동</strong>
+          <small>입력한 내용은 자동 저장됩니다.</small>
+        </div>
+        <button
+          type="button"
+          class="btn-close"
+          aria-label="닫기"
+          onclick="closeLegEditor()"
+        >
+          ×
+        </button>
+      </div>
+      <div class="transport-options" id="leg-transport-options">
+        <button
+          type="button"
+          class="transport-option"
+          data-mode="walk"
+          aria-pressed="false"
+          onclick="selectLegTransport('walk')"
+        >
+          <span class="transport-icon">🚶</span>도보
+        </button>
+        <button
+          type="button"
+          class="transport-option"
+          data-mode="car"
+          aria-pressed="false"
+          onclick="selectLegTransport('car')"
+        >
+          <span class="transport-icon">🚗</span>자동차
+        </button>
+        <button
+          type="button"
+          class="transport-option"
+          data-mode="bus"
+          aria-pressed="false"
+          onclick="selectLegTransport('bus')"
+        >
+          <span class="transport-icon">🚌</span>버스
+        </button>
+        <button
+          type="button"
+          class="transport-option"
+          data-mode="subway"
+          aria-pressed="false"
+          onclick="selectLegTransport('subway')"
+        >
+          <span class="transport-icon">🚇</span>지하철
+        </button>
+        <button
+          type="button"
+          class="transport-option"
+          data-mode="other"
+          aria-pressed="false"
+          onclick="selectLegTransport('other')"
+        >
+          <span class="transport-icon">✈️</span>기타
+        </button>
+      </div>
+      <input
+        type="text"
+        id="leg-transport-input"
+        class="text-input transport-custom-input"
+        placeholder="기차, 비행기, 배 등 입력"
+        oninput="saveLegDetails()"
+        hidden
+      />
+      <label class="leg-time-input-label" for="leg-time-input">이동 시간</label>
+      <div class="leg-time-input-wrap">
+        <input
+          type="number"
+          id="leg-time-input"
+          class="text-input"
+          min="1"
+          step="1"
+          placeholder="분 입력"
+          oninput="saveLegDetails()"
+        />
+        <span>분</span>
+      </div>
+    </div>
+
+    <!-- Day 삭제/수정 드롭다운 메뉴 -->
+    <div id="day-dropdown-menu" class="dropdown-menu">
+      <button class="dropdown-item" onclick="onDropdownRename()">
+        <span>이름 바꾸기</span>
+      </button>
+      <div class="dropdown-divider"></div>
+      <button class="dropdown-item danger" onclick="onDropdownDelete()">
+        <span>Day 삭제</span>
+      </button>
+    </div>
+
+    <!-- [온보딩 / 숙소 정보 모달] (수정 4: + 숙소 추가 버튼 추가) -->
+    <div id="base-modal-overlay">
+      <div id="base-modal">
+        <div class="modal-header">
+          <h3 class="base-modal-title">
+            <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 11.5 12 4l9 7.5V21h-6v-6H9v6H3z" fill="#1a1a1a" />
+            </svg>
+            베이스캠프(숙소) 설정
+          </h3>
+          <div class="modal-header-actions">
+            <button
+              class="btn-add-new-base"
+              onclick="addNewBaseGroup()"
+              title="새 숙소 추가"
+            >
+              + 숙소 추가
+            </button>
+            <button class="btn-close" onclick="closeBaseModal()">✕</button>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <div class="base-range-labels">
+            <span
+              >시작 날짜 <strong id="base-range-start-label">선택</strong></span
+            >
+            <span
+              >종료 날짜 <strong id="base-range-end-label">선택</strong></span
+            >
+          </div>
+          <div
+            id="base-day-range"
+            class="base-day-range"
+            role="group"
+            aria-label="숙박 Day 범위"
+          ></div>
+          <p id="base-range-hint" class="base-range-hint">
+            숙박할 날짜를 선택하세요. 당일치기의 경우 하루만 선택하면 됩니다.
+          </p>
+        </div>
+
+        <div class="modal-section">
+          <label>숙소 이름</label>
+          <input
+            type="text"
+            id="input-base-name"
+            class="text-input"
+            placeholder="예: 제주 릴렉스 호텔"
+            oninput="keepBaseModalInputState()"
+          />
+        </div>
+
+        <div class="modal-section">
+          <label>주소</label>
+          <input
+            type="text"
+            id="input-base-address"
+            class="text-input"
+            placeholder="구글맵 등의 주소를 입력하세요"
+            oninput="keepBaseModalInputState()"
+          />
+          <button class="btn-link-map" onclick="openBaseInGoogleMaps()">
+            구글맵에서 열기
+          </button>
+        </div>
+
+        <div class="modal-section">
+          <label>메모</label>
+          <textarea
+            id="input-base-memo"
+            class="text-area-input"
+            placeholder="예: 체크인 15:00, 예약번호 1234"
+            oninput="keepBaseModalInputState()"
+          ></textarea>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn-modal-save" onclick="saveBaseModal()">
+            베이스캠프 설정 완료
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 상세 메모지 팝업 모달 -->
+    <div id="memo-modal-overlay">
+      <div id="memo-modal">
+        <div class="modal-header">
+          <span id="modal-category-badge" class="modal-cat-badge">관광지</span>
+          <button class="btn-close" onclick="closeMemoModal()">✕</button>
+        </div>
+
+        <h3 id="modal-spot-title">장소 이름</h3>
+        <p id="modal-spot-sub" class="modal-sub">이동수단 정보</p>
+
+        <div class="modal-section">
+          <label>카테고리</label>
+          <select
+            id="modal-category-select"
+            class="text-input"
+            onchange="onModalCategoryChange()"
+          ></select>
+        </div>
+
+        <div class="modal-section">
+          <label>방문 일자 (스케줄)</label>
+          <select id="modal-day-select" class="text-input"></select>
+        </div>
+
+        <div class="modal-section">
+          <label>코스 방문 순서</label>
+          <input
+            type="number"
+            id="modal-order-input"
+            class="text-input"
+            min="1"
+          />
+        </div>
+
+        <div class="modal-section">
+          <label>숙소 기준 거리 (km)</label>
+          <input
+            type="number"
+            id="modal-dist-input"
+            class="text-input"
+            min="0.1"
+            step="0.1"
+            placeholder="거리 입력 가능"
+          />
+        </div>
+
+        <div class="modal-section">
+          <label>주소 (선택)</label>
+          <input type="text" id="modal-address-input" class="text-input" />
+          <button class="btn-link-map" onclick="openSpotInGoogleMaps()">
+            구글맵에서 열기
+          </button>
+        </div>
+
+        <div class="modal-section">
+          <label>메모지 색상 선택</label>
+          <div class="color-picker-group">
+            <div
+              class="color-chip active"
+              style="background: #ffffff"
+              onclick="selectModalColor('#FFFFFF', this)"
+            ></div>
+            <div
+              class="color-chip"
+              style="background: #fff4b8"
+              onclick="selectModalColor('#FFF4B8', this)"
+            ></div>
+            <div
+              class="color-chip"
+              style="background: #ffd8e4"
+              onclick="selectModalColor('#FFD8E4', this)"
+            ></div>
+            <div
+              class="color-chip"
+              style="background: #d2f5e3"
+              onclick="selectModalColor('#D2F5E3', this)"
+            ></div>
+            <div
+              class="color-chip"
+              style="background: #e5d9ff"
+              onclick="selectModalColor('#E5D9FF', this)"
+            ></div>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <label>상세 메모</label>
+          <textarea
+            id="modal-memo-text"
+            placeholder="메모를 입력하세요."
+          ></textarea>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn-modal-delete" onclick="deleteCurrentSpot()">
+            핀 삭제
+          </button>
+          <button class="btn-modal-save" onclick="saveMemoModal()">
+            저장하기
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 우측 입력 사이드바 -->
+    <div id="sidebar">
+      <div class="sidebar-header">
+        <h2>핀 설정하기</h2>
+        <button class="btn-close" onclick="toggleSidebar()">✕</button>
+      </div>
+
+      <div class="form-section">
+        <label>핀 이름</label>
+        <input
+          type="text"
+          id="input-name"
+          class="text-input"
+          placeholder="예: 성산일출봉"
+        />
+      </div>
+
+      <div class="form-section">
+        <label>주소 (선택)</label>
+        <input
+          type="text"
+          id="input-address"
+          class="text-input"
+          placeholder="주소를 붙여넣으세요"
+        />
+        <button
+          class="btn-link-map"
+          type="button"
+          onclick="openNewSpotInGoogleMaps()"
+        >
+          구글맵에서 검색
+        </button>
+        <small class="field-hint"
+          >숙소 주소와 핀 주소를 입력한 뒤 ‘숙소 거리 원형’을 누르면 자동
+          계산됩니다.</small
+        >
+      </div>
+
+      <div class="form-section">
+        <label>숙소 기준 거리 (km)</label>
+        <input
+          type="number"
+          id="input-dist"
+          class="text-input"
+          min="0.1"
+          step="0.1"
+          placeholder="거리를 입력할 수 있습니다"
+        />
+      </div>
+
+      <div class="form-section">
+        <label>카테고리</label>
+        <div class="chip-group" id="category-chips"></div>
+      </div>
+
+      <div class="form-section">
+        <label>방문 일자 (스케줄)</label>
+        <div
+          class="day-bar sidebar-day-bar"
+          id="sidebar-day-bar"
+          aria-label="핀 방문 일자 선택"
+        ></div>
+        <input type="hidden" id="input-day" value="1" />
+      </div>
+
+      <div class="form-section">
+        <label>메모</label>
+        <input
+          type="text"
+          id="input-memo"
+          class="text-input"
+          placeholder="예: 예약 필수"
+        />
+      </div>
+
+      <div class="sidebar-footer">
+        <button class="btn-submit" onclick="submitSpotTemplate()">
+          지도에 추가하기
+        </button>
+      </div>
+    </div>
+
+    <!-- 터치 및 인라인 이벤트 스크립트 -->
+    <script>
+      document.addEventListener(
+        "touchmove",
+        function (e) {
+          if (
+            e.target.closest("#summary-bar") ||
+            e.target.closest("#leg-editor-bar") ||
+            e.target.closest("#sidebar") ||
+            e.target.closest("#memo-modal-overlay") ||
+            e.target.closest("#base-modal-overlay") ||
+            e.target.closest("#top-ui")
+          )
+            return;
+          e.preventDefault();
+        },
+        { passive: false },
+      );
+
+      function toggleSidebar() {
+        document.getElementById("sidebar").classList.toggle("open");
+      }
+
+      let isEditingTitle = false;
+
+      function startTitleEdit() {
+        if (isEditingTitle) return;
+        isEditingTitle = true;
+
+        const group = document.querySelector(
+          "#title-box-btn .title-text-group",
+        );
+        group.innerHTML =
+          '<input type="text" id="inline-title-input" class="inline-title-input" maxlength="40" placeholder="여행 제목" />' +
+          '<input type="text" id="inline-sub-input" class="inline-sub-input" maxlength="80" placeholder="부제목 / 메인 메모" />';
+
+        const titleInput = document.getElementById("inline-title-input");
+        const subInput = document.getElementById("inline-sub-input");
+        titleInput.value = headerInfo.mainTitle;
+        subInput.value = headerInfo.subTitle;
+
+        titleInput.focus();
+        titleInput.select();
+      }
+
+      function finishTitleEdit(save) {
+        if (!isEditingTitle) return;
+        isEditingTitle = false;
+
+        const titleInput = document.getElementById("inline-title-input");
+        const subInput = document.getElementById("inline-sub-input");
+
+        if (save && titleInput && subInput) {
+          headerInfo.mainTitle = titleInput.value.trim();
+          headerInfo.subTitle = subInput.value.trim();
+          storeItem("myTripHeader", headerInfo);
+        }
+
+        const group = document.querySelector(
+          "#title-box-btn .title-text-group",
+        );
+        group.innerHTML =
+          '<h1 id="header-main-title"></h1><p id="header-sub-title"></p>';
+        updateHeaderUI();
+      }
+
+      (function setupTitleEditEvents() {
+        const titleBox = document.getElementById("title-box-btn");
+
+        titleBox.addEventListener("keydown", function (e) {
+          if (!isEditingTitle || e.isComposing) return;
+
+          if (e.key === "Enter") {
+            e.preventDefault();
+            if (e.target.id === "inline-title-input") {
+              document.getElementById("inline-sub-input").focus();
+            } else {
+              finishTitleEdit(true);
+            }
+          } else if (e.key === "Escape") {
+            finishTitleEdit(false);
+          }
+        });
+
+        titleBox.addEventListener("focusout", function (e) {
+          if (!isEditingTitle) return;
+          if (e.relatedTarget && titleBox.contains(e.relatedTarget)) return;
+          finishTitleEdit(true);
+        });
+      })();
+    </script>
+    <script src="sketch.js"></script>
+  </body>
+</html>

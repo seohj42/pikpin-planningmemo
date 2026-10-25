@@ -1,0 +1,17 @@
+{
+  "name": "memo-middle-distance-site",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MEMO_MIDDLE with Google Routes distance calculations",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0"
+  }
+}
