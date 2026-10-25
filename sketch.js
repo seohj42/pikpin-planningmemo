@@ -1408,6 +1408,21 @@ function closeLegEditor() {
   currentEditingLegSpot = null;
 }
 
+function clearLegDetails() {
+  if (!currentEditingLegSpot) return;
+
+  currentEditingLegSpot.transport = "";
+  currentEditingLegSpot.legTravelMinutes = null;
+  currentEditingLegSpot.legDistanceKm = null;
+  currentEditingLegSpot.legRouteCalculationDisabled = true;
+
+  document.getElementById("leg-time-input").value = "";
+  document.getElementById("leg-transport-input").value = "";
+  syncTransportSelection("leg", "");
+  storeItem("myTripSpots", spots);
+  updateSummaryUI(getSelectedRouteSpots());
+}
+
 function selectLegTransport(mode) {
   selectTransport("leg", mode);
   if (mode !== "other") saveLegDetails();
@@ -1419,9 +1434,12 @@ function saveLegDetails() {
   const timeValue = document.getElementById("leg-time-input").value.trim();
   const minutes = timeValue === "" ? null : Number(timeValue);
   currentEditingLegSpot.transport = selectedTransport || "교통수단 미정";
+  currentEditingLegSpot.legRouteCalculationDisabled = false;
   currentEditingLegSpot.legTravelMinutes =
     Number.isFinite(minutes) && minutes > 0 ? minutes : null;
+  if (minutes === null) currentEditingLegSpot.legDistanceKm = null;
   storeItem("myTripSpots", spots);
+  updateSummaryUI(getSelectedRouteSpots());
 }
 
 function reorderSpots() {
@@ -2277,7 +2295,7 @@ async function refreshBaseRoutesForDay() {
         successCount += 1;
 
         // 첫 번째 주소 핀은 숙소에서 오는 선이므로 숙소 경로 결과를 재사용합니다.
-        if (spot === validSpots[0]) {
+        if (spot === validSpots[0] && !spot.legRouteCalculationDisabled) {
           if (
             spot.legDistanceKm == null ||
             !Number.isFinite(Number(spot.legDistanceKm))
@@ -2295,9 +2313,12 @@ async function refreshBaseRoutesForDay() {
     }
 
     // 두 번째 핀부터는 직전 주소 핀에서 현재 핀까지의 구간을 계산합니다.
+    const legRequests = validSpots
+      .slice(1)
+      .map((spot, index) => ({ spot, previousSpot: validSpots[index] }))
+      .filter(({ spot }) => !spot.legRouteCalculationDisabled);
     const legResults = await Promise.all(
-      validSpots.slice(1).map(async (spot, index) => {
-        const previousSpot = validSpots[index];
+      legRequests.map(async ({ spot, previousSpot }) => {
         const { matrix } = await RouteMatrix.computeRouteMatrix({
           origins: [String(previousSpot.address).trim()],
           destinations: [String(spot.address).trim()],
@@ -2323,6 +2344,7 @@ async function refreshBaseRoutesForDay() {
       }
 
       // 직접 입력한 구간 시간이 있으면 유지하고, 비어 있을 때만 계산값을 채웁니다.
+      if (spot.legRouteCalculationDisabled) continue;
       if (
         spot.legDistanceKm == null ||
         !Number.isFinite(Number(spot.legDistanceKm))
