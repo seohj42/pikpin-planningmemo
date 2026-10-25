@@ -977,6 +977,25 @@ function openInGoogleMaps(query) {
   window.open(url, "_blank", "noopener");
 }
 
+// index.html의 "구글맵에서 열기" 버튼들이 부르는 함수들
+function openBaseInGoogleMaps() {
+  const address = document.getElementById("input-base-address").value.trim();
+  const name = document.getElementById("input-base-name").value.trim();
+  openInGoogleMaps(address || name);
+}
+
+function openSpotInGoogleMaps() {
+  const address = document.getElementById("modal-address-input").value.trim();
+  const name = currentEditingSpot ? currentEditingSpot.name : "";
+  openInGoogleMaps(address || name);
+}
+
+function openNewSpotInGoogleMaps() {
+  const address = document.getElementById("input-address").value.trim();
+  const name = document.getElementById("input-name").value.trim();
+  openInGoogleMaps(address || name);
+}
+
 function ensureCategoriesForSpots() {
   spots.forEach((spot) => {
     if (!spot.category) return;
