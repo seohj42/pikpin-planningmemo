@@ -498,6 +498,11 @@ let currentEditingLegSpot = null;
 let selectedDayForMenu = null;
 let clickTimer = null;
 let lastTouchTap = null;
+let lastTouchStartAt = 0;
+let lastTouchActivityAt = 0;
+let lastDoubleTapAt = 0;
+let nativeDown = null;
+let nativeLastTap = null;
 let pressStartX = 0;
 let pressStartY = 0;
 
@@ -816,7 +821,8 @@ function fillBaseModalForDay(dayId) {
 }
 
 function setup() {
-  createCanvas(windowWidth, windowHeight);
+  const cnv = createCanvas(windowWidth, windowHeight);
+  setupNativeDoubleTap(cnv.elt);
 
   // 저장된 데이터가 있으면 안전하게 불러오고, 없으면 기본값 설정
   let savedSpots = getItem("myTripSpots");
@@ -2001,7 +2007,77 @@ function handleStart(x, y) {
   }
 }
 
+// 아이패드용 더블탭: p5 터치 이벤트 대신 브라우저 pointer 이벤트로 직접 감지
+function setupNativeDoubleTap(canvasEl) {
+  // 사파리의 더블탭 확대와 기본 제스처가 터치를 끊지 못하게 막음
+  canvasEl.style.touchAction = "none";
+
+  const isFingerOrPen = (e) =>
+    e.pointerType === "touch" || e.pointerType === "pen";
+
+  canvasEl.addEventListener("pointerdown", (e) => {
+    if (!isFingerOrPen(e)) return;
+    const rect = canvasEl.getBoundingClientRect();
+    nativeDown = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+      time: Date.now(),
+    };
+  });
+
+  canvasEl.addEventListener("pointerup", (e) => {
+    if (!isFingerOrPen(e) || !nativeDown) return;
+    const rect = canvasEl.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const down = nativeDown;
+    nativeDown = null;
+
+    if (isAnyOverlayOpen()) return;
+
+    // 손가락이 움직였으면 탭이 아니라 드래그
+    if (dist(down.x, down.y, x, y) >= 10) {
+      nativeLastTap = null;
+      return;
+    }
+
+    const spot = findSpotAtCanvasPosition(x, y, { includePin: true });
+    if (!spot) {
+      nativeLastTap = null;
+      return;
+    }
+
+    const isDouble =
+      nativeLastTap &&
+      nativeLastTap.spotId === spot.id &&
+      down.time - nativeLastTap.startTime < 450 &&
+      dist(x, y, nativeLastTap.x, nativeLastTap.y) < 30 &&
+      Date.now() - lastDoubleTapAt > 400;
+
+    if (isDouble) {
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = null;
+      }
+      lastDoubleTapAt = Date.now();
+      nativeLastTap = null;
+      lastTouchTap = null;
+      toggleSpotRoute(spot);
+    } else {
+      nativeLastTap = { spotId: spot.id, startTime: down.time, x, y };
+    }
+  });
+}
+
+// 터치 직후 700ms 안에 들어오는 마우스 이벤트는 터치가 만든 가짜 이벤트로 보고 무시
+function isTouchRecently() {
+  return Date.now() - lastTouchActivityAt < 700;
+}
+
 function mouseReleased() {
+  if (isTouchRecently()) return;
+  if (Date.now() - lastDoubleTapAt < 500) return;
+
   const moveDistance = dist(pressStartX, pressStartY, mouseX, mouseY);
 
   if (draggedSpot && moveDistance < 5) {
@@ -2447,25 +2523,52 @@ function getTransformedMouse(x, y) {
 
 function mousePressed(event) {
   if (isUiEvent(event)) return;
+  if (isTouchRecently()) return;
   handleStart(mouseX, mouseY);
 }
+
 function mouseDragged() {
+  if (isTouchRecently()) return;
   handleMove(mouseX, mouseY);
 }
 
 function touchStarted(event) {
   if (isUiEvent(event)) return;
+  lastTouchStartAt = Date.now();
+  lastTouchActivityAt = lastTouchStartAt;
+
+  // 두 번째 탭이 같은 자리에서 시작되면 첫 탭의 "메모 열기" 예약을 바로 취소
+  if (touches.length > 0 && lastTouchTap && clickTimer) {
+    const closeEnough =
+      dist(touches[0].x, touches[0].y, lastTouchTap.x, lastTouchTap.y) < 30;
+    if (closeEnough && lastTouchStartAt - lastTouchTap.startTime < 450) {
+      clearTimeout(clickTimer);
+      clickTimer = null;
+    }
+  }
+
   if (touches.length > 0) handleStart(touches[0].x, touches[0].y);
 }
+
 function touchMoved(event) {
   if (isUiEvent(event)) return true;
+  lastTouchActivityAt = Date.now();
   if (touches.length > 0) handleMove(touches[0].x, touches[0].y);
   return false;
 }
+
 function touchEnded(event) {
+  lastTouchActivityAt = Date.now();
+
   if (isUiEvent(event)) {
     handleEnd();
     return;
+  }
+
+  // 방금 pointer 이벤트가 더블탭을 처리했다면 여기서는 아무것도 하지 않음
+  if (Date.now() - lastDoubleTapAt < 500) {
+    handleEnd();
+    return false;
   }
 
   const touch = event?.changedTouches?.[0];
@@ -2475,13 +2578,21 @@ function touchEnded(event) {
   const y = touch && rect ? touch.clientY - rect.top : mouseY;
   const moveDistance = dist(pressStartX, pressStartY, x, y);
 
-  if (draggedSpot && moveDistance < 10) {
-    const spotToOpen = draggedSpot;
-    const now = Date.now();
+  if (moveDistance < 10) {
+    const spotToOpen =
+      draggedSpot || findSpotAtCanvasPosition(x, y, { includePin: true });
+    if (!spotToOpen) {
+      lastTouchTap = null;
+      handleEnd();
+      return false;
+    }
+
+    // 터치 시작 시각끼리 비교해서, 손가락을 누르고 있던 시간이 판정에 끼지 않게 함
+    const startTime = lastTouchStartAt;
     const isDoubleTap =
       lastTouchTap &&
       lastTouchTap.spotId === spotToOpen.id &&
-      now - lastTouchTap.time < 400 &&
+      startTime - lastTouchTap.startTime < 450 &&
       dist(x, y, lastTouchTap.x, lastTouchTap.y) < 30;
 
     if (isDoubleTap) {
@@ -2489,15 +2600,17 @@ function touchEnded(event) {
         clearTimeout(clickTimer);
         clickTimer = null;
       }
+      lastDoubleTapAt = Date.now();
       toggleSpotRoute(spotToOpen);
       lastTouchTap = null;
     } else {
       if (clickTimer) clearTimeout(clickTimer);
+      // 두 번째 탭의 시작은 항상 이 예약이 실행되기 전에 도착함
       clickTimer = setTimeout(() => {
         openMemoModal(spotToOpen);
         clickTimer = null;
-      }, 400);
-      lastTouchTap = { spotId: spotToOpen.id, time: now, x, y };
+      }, 450);
+      lastTouchTap = { spotId: spotToOpen.id, startTime, x, y };
     }
   } else {
     lastTouchTap = null;
@@ -2512,28 +2625,42 @@ function doubleClicked(event) {
   if (isUiEvent(event)) return;
   if (isAnyOverlayOpen()) return;
 
+  // p5.js may also fire doubleClicked() for touchscreen input.
+  // The custom touch handler has already handled that gesture.
+  if (isTouchRecently()) return;
+
   if (clickTimer) {
     clearTimeout(clickTimer);
     clickTimer = null;
   }
 
-  const worldPos = getTransformedMouse(mouseX, mouseY);
+  const spot = findSpotAtCanvasPosition(mouseX, mouseY, { includePin: true });
+  if (spot) toggleSpotRoute(spot);
+}
+
+function findSpotAtCanvasPosition(x, y, { includePin = false } = {}) {
+  const worldPos = getTransformedMouse(x, y);
   const centerX = width / 2;
   const centerY = height / 2;
 
-  spots.forEach((spot) => {
-    if (!isSpotVisible(spot)) return;
-    if (spot.day !== currentDayFilter) return;
+  // Last-drawn cards are visually on top, so check them first.
+  for (let i = spots.length - 1; i >= 0; i--) {
+    const spot = spots[i];
+    if (!isSpotVisible(spot) || spot.day !== currentDayFilter) continue;
 
     const point = getSpotPosition(spot, centerX, centerY);
-    const px = point.x;
-    const py = point.y;
+    const onCard =
+      worldPos.x >= point.x - 96 &&
+      worldPos.x <= point.x + 96 &&
+      worldPos.y >= point.y &&
+      worldPos.y <= point.y + 82;
+    const onPin =
+      includePin && dist(worldPos.x, worldPos.y, point.x, point.y - 18) < 20;
 
-    let d = dist(worldPos.x, worldPos.y, px, py - 18);
-    if (d < 20) {
-      toggleSpotRoute(spot);
-    }
-  });
+    if (onCard || onPin) return spot;
+  }
+
+  return null;
 }
 
 function toggleSpotRoute(spot) {
