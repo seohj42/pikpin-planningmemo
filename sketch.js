@@ -497,6 +497,7 @@ let currentEditingLegSpot = null;
 
 let selectedDayForMenu = null;
 let clickTimer = null;
+let lastTouchTap = null;
 let pressStartX = 0;
 let pressStartY = 0;
 
@@ -2461,8 +2462,50 @@ function touchMoved(event) {
   if (touches.length > 0) handleMove(touches[0].x, touches[0].y);
   return false;
 }
-function touchEnded() {
+function touchEnded(event) {
+  if (isUiEvent(event)) {
+    handleEnd();
+    return;
+  }
+
+  const touch = event?.changedTouches?.[0];
+  const canvas = document.querySelector("canvas");
+  const rect = canvas?.getBoundingClientRect();
+  const x = touch && rect ? touch.clientX - rect.left : mouseX;
+  const y = touch && rect ? touch.clientY - rect.top : mouseY;
+  const moveDistance = dist(pressStartX, pressStartY, x, y);
+
+  if (draggedSpot && moveDistance < 10) {
+    const spotToOpen = draggedSpot;
+    const now = Date.now();
+    const isDoubleTap =
+      lastTouchTap &&
+      lastTouchTap.spotId === spotToOpen.id &&
+      now - lastTouchTap.time < 400 &&
+      dist(x, y, lastTouchTap.x, lastTouchTap.y) < 30;
+
+    if (isDoubleTap) {
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = null;
+      }
+      toggleSpotRoute(spotToOpen);
+      lastTouchTap = null;
+    } else {
+      if (clickTimer) clearTimeout(clickTimer);
+      clickTimer = setTimeout(() => {
+        openMemoModal(spotToOpen);
+        clickTimer = null;
+      }, 400);
+      lastTouchTap = { spotId: spotToOpen.id, time: now, x, y };
+    }
+  } else {
+    lastTouchTap = null;
+    if (pressedBase && moveDistance < 10) openBaseModal();
+  }
+
   handleEnd();
+  return false;
 }
 
 function doubleClicked(event) {
@@ -2488,17 +2531,23 @@ function doubleClicked(event) {
 
     let d = dist(worldPos.x, worldPos.y, px, py - 18);
     if (d < 20) {
-      spot.selected = !spot.selected;
-      if (spot.selected) {
-        let sameDayCount = spots.filter(
-          (s) => s.selected && s.day === spot.day,
-        ).length;
-        spot.order = sameDayCount;
-      }
-      reorderSpots();
-      storeItem("myTripSpots", spots);
+      toggleSpotRoute(spot);
     }
   });
+}
+
+function toggleSpotRoute(spot) {
+  if (!spot) return;
+
+  spot.selected = !spot.selected;
+  if (spot.selected) {
+    const sameDayCount = spots.filter(
+      (s) => s.selected && s.day === spot.day,
+    ).length;
+    spot.order = sameDayCount;
+  }
+  reorderSpots();
+  storeItem("myTripSpots", spots);
 }
 
 function submitSpotTemplate() {

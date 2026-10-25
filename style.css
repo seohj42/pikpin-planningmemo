@@ -61,7 +61,8 @@ body {
 
 .glow {
   position: absolute;
-  top: 30px;
+  top: 5%;
+  height: 55%;
   left: 28px;
   right: 28px;
   height: 330px;
@@ -76,10 +77,10 @@ body {
 
 .glow-bottom {
   position: absolute;
-  bottom: 30px;
+  bottom: 5%;
+  height: 45%;
   left: 28px;
   right: 28px;
-  height: 330px;
   border-radius: 48px;
   background:
     radial-gradient(circle at 85% 30%, #e0faf6 0%, transparent 55%),
