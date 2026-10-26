@@ -141,14 +141,19 @@ canvas {
   justify-content: flex-start;
   pointer-events: auto;
   z-index: 20;
+  overflow: visible;
 }
 
 .title-box {
   flex: 1;
   min-width: 0;
+  min-height: 32px;
+  overflow: visible;
   cursor: pointer;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   text-align: left; /* 텍스트 왼쪽 정렬 */
   padding-top: 2px;
 }
@@ -157,6 +162,31 @@ canvas {
   flex: 1;
   min-width: 0;
   text-align: left;
+}
+
+.title-logo {
+  flex: 0 0 auto;
+  width: 43.2px;
+  height: 32px;
+  min-width: 43.2px;
+  min-height: 32px;
+  margin-left: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: visible;
+}
+
+.title-logo svg {
+  display: block;
+  width: 40px;
+  height: 25px;
+  margin-right: 25px;
+  margin-bottom: 12px;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+  flex: none;
 }
 
 .title-box h1 {
@@ -877,6 +907,24 @@ canvas {
   text-transform: uppercase;
 }
 
+#memo-modal .text-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  outline: none;
+}
+
+#memo-modal .text-input:focus {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px rgba(26, 26, 26, 0.1);
+}
+
 .btn-link-map {
   align-self: flex-start;
   margin-top: 4px;
@@ -971,6 +1019,8 @@ canvas {
   overflow-y: auto;
   overscroll-behavior: contain;
   touch-action: pan-y;
+  display: flex;
+  flex-direction: column;
 }
 
 #sidebar.open {
@@ -1006,6 +1056,7 @@ canvas {
 #sidebar .form-section {
   margin-bottom: 28px;
   padding: 0 24px;
+  flex-shrink: 0;
 }
 
 #sidebar .form-section label {
@@ -1090,8 +1141,13 @@ canvas {
 .sidebar-footer {
   position: sticky;
   bottom: 0;
+  z-index: 3;
+  flex-shrink: 0;
+  margin-top: auto;
   padding: 14px 24px calc(18px + env(safe-area-inset-bottom));
   background: #ffffff;
+  border-top: 1px solid rgba(20, 24, 31, 0.08);
+  box-shadow: 0 -8px 18px rgba(20, 24, 31, 0.06);
 }
 
 #sidebar .btn-submit {

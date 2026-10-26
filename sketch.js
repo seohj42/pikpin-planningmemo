@@ -503,6 +503,12 @@ let lastTouchActivityAt = 0;
 let lastDoubleTapAt = 0;
 let nativeDown = null;
 let nativeLastTap = null;
+let expandedMemoSpotIds = new Set();
+const MEMO_CARD_HEIGHT = 82;
+const MEMO_DETAIL_TOP_OFFSET = 138;
+const TOUCH_TAP_MOVE_TOLERANCE = 20;
+const TOUCH_DOUBLE_TAP_WINDOW_MS = 700;
+const TOUCH_DOUBLE_TAP_DISTANCE = 48;
 let pressStartX = 0;
 let pressStartY = 0;
 
@@ -820,6 +826,20 @@ function fillBaseModalForDay(dayId) {
   renderBaseDayRange();
 }
 
+function openInitialBaseSetupModal() {
+  editingBaseDayId = currentDayFilter;
+  baseRangeStartId = null;
+  baseRangeEndId = null;
+  baseRangeSelectingEnd = false;
+  // 선택한 날짜의 기본 예시 숙소가 입력란에 다시 채워지지 않도록 합니다.
+  isBaseModalDirty = true;
+  document.getElementById("input-base-name").value = "";
+  document.getElementById("input-base-address").value = "";
+  document.getElementById("input-base-memo").value = "";
+  renderBaseDayRange();
+  document.getElementById("base-modal-overlay").classList.add("open");
+}
+
 function setup() {
   const cnv = createCanvas(windowWidth, windowHeight);
   setupNativeDoubleTap(cnv.elt);
@@ -830,6 +850,7 @@ function setup() {
   let savedHeader = getItem("myTripHeader");
   let savedCategories = getItem("myTripCategories");
   let savedBasesByDay = getItem("myTripBases");
+  let savedBaseSetupCompleted = getItem("myTripBaseSetupCompleted") === true;
 
   if (!savedSpots || savedSpots.length === 0) {
     headerInfo = { ...DEFAULT_HEADER };
@@ -906,6 +927,30 @@ function setup() {
   populateDaySelectOptions();
   updateViewModeButtons();
   reorderSpots();
+
+  if (!savedBaseSetupCompleted) {
+    const hasCustomBase = daysData.some((day) => {
+      const currentBase = getBaseInfoForDay(day.id);
+      const defaultBase = normalizeBaseInfo(
+        DEFAULT_BASES_BY_DAY[String(day.id)],
+      );
+      const hasBase =
+        currentBase.name || currentBase.address || currentBase.memo;
+      const matchesDefault =
+        currentBase.name === defaultBase.name &&
+        currentBase.address === defaultBase.address &&
+        currentBase.memo === defaultBase.memo;
+      return hasBase && !matchesDefault;
+    });
+
+    if (hasCustomBase) {
+      // 기존에 직접 입력한 숙소가 있으면 첫 설정 화면을 다시 띄우지 않습니다.
+      storeItem("myTripBaseSetupCompleted", true);
+    } else {
+      // 기본 예시 숙소만 저장되어 있거나 숙소가 비어 있으면 먼저 숙소를 설정합니다.
+      setTimeout(openInitialBaseSetupModal, 300);
+    }
+  }
 }
 
 function updateHeaderUI() {
@@ -962,6 +1007,7 @@ function saveBaseModal() {
   }
 
   storeItem("myTripBases", baseInfosByDay);
+  storeItem("myTripBaseSetupCompleted", true);
   renderDayBarUI();
   closeBaseModal();
 }
@@ -977,22 +1023,20 @@ function openInGoogleMaps(query) {
   window.open(url, "_blank", "noopener");
 }
 
-// index.html의 "구글맵에서 열기" 버튼들이 부르는 함수들
 function openBaseInGoogleMaps() {
-  const address = document.getElementById("input-base-address").value.trim();
-  const name = document.getElementById("input-base-name").value.trim();
+  const address = document.getElementById("input-base-address")?.value.trim();
+  const name = document.getElementById("input-base-name")?.value.trim();
   openInGoogleMaps(address || name);
 }
 
 function openSpotInGoogleMaps() {
-  const address = document.getElementById("modal-address-input").value.trim();
-  const name = currentEditingSpot ? currentEditingSpot.name : "";
-  openInGoogleMaps(address || name);
+  const address = document.getElementById("modal-address-input")?.value.trim();
+  openInGoogleMaps(address || currentEditingSpot?.name || "");
 }
 
 function openNewSpotInGoogleMaps() {
-  const address = document.getElementById("input-address").value.trim();
-  const name = document.getElementById("input-name").value.trim();
+  const address = document.getElementById("input-address")?.value.trim();
+  const name = document.getElementById("input-name")?.value.trim();
   openInGoogleMaps(address || name);
 }
 
@@ -1575,6 +1619,17 @@ function draw() {
     if (dist(hoverWorld.x, hoverWorld.y, point.x, point.y - 18) < 17) {
       hoveredSpotId = spot.id;
     }
+    const memoGeometry = getMemoToggleGeometry(
+      point.y,
+      expandedMemoSpotIds.has(spot.id),
+    );
+    if (
+      String(spot.memo || "").trim() &&
+      dist(hoverWorld.x, hoverWorld.y, point.x, memoGeometry.buttonY) <
+        16 / zoomLevel
+    ) {
+      hoveredSpotId = spot.id;
+    }
   });
   cursor(
     draggedSpot ? "grabbing" : hoveredSpotId !== null ? "grab" : "default",
@@ -1589,6 +1644,8 @@ function draw() {
     const py = point.y;
     const mainColor = getCategoryColor(spot.category);
     const hasAddress = Boolean(spot.address && spot.address.trim().length > 0);
+    const detailedMemo = String(spot.memo || "").trim();
+    const hasDetailedMemo = detailedMemo.length > 0;
 
     stroke("rgba(20, 24, 31, 0.15)");
     strokeWeight(2 / zoomLevel);
@@ -1624,7 +1681,7 @@ function draw() {
     if (!hasAddress) {
       stroke("#FF3B30");
       strokeWeight(2.5 / zoomLevel);
-      fill("#FFF8F8");
+      fill(spot.cardBg || "#FFF8F8");
     } else if (spot.selected) {
       stroke("#1A1A1A");
       strokeWeight(2 / zoomLevel);
@@ -1636,8 +1693,8 @@ function draw() {
     }
 
     rectMode(CENTER);
-    const cardHeight = 82;
-    const cardOffsetY = 41;
+    const cardHeight = MEMO_CARD_HEIGHT;
+    const cardOffsetY = cardHeight / 2;
     const cardWidth = 192;
     const cardLeft = px - cardWidth / 2;
 
@@ -1691,11 +1748,13 @@ function draw() {
     const transportText = formatTransportName(spot.transport);
     text(fitText(transportText, cardWidth - 24), cardLeft + 12, py + 44);
 
+    const lowerLineY = py + 62.7;
+
     if (!hasAddress) {
       fill("#FF3B30");
       textSize(11);
       textStyle(BOLD);
-      text("⚠️ 주소 입력 필요", cardLeft + 12, py + 62.7);
+      text("⚠️ 주소 입력 필요", cardLeft + 12, lowerLineY);
     } else {
       fill("#737B86");
       textSize(11);
@@ -1703,7 +1762,124 @@ function draw() {
       const baseDistanceText = hasBaseDistance(spot)
         ? `숙소 ${Number(spot.baseDistanceKm).toFixed(1)}km${Number.isFinite(Number(spot.baseTravelMinutes)) ? ` · 차로 ${Number(spot.baseTravelMinutes)}분` : ""}`
         : "숙소와의 거리: 계산 전";
-      text(fitText(baseDistanceText, cardWidth - 24), cardLeft + 12, py + 62.7);
+      text(
+        fitText(baseDistanceText, cardWidth - 24),
+        cardLeft + 12,
+        lowerLineY,
+      );
+    }
+
+    if (hasDetailedMemo) {
+      const memoExpanded = expandedMemoSpotIds.has(spot.id);
+      const memoGeometry = getMemoToggleGeometry(py, memoExpanded);
+      const toggleY = memoGeometry.buttonY;
+
+      if (memoExpanded) {
+        stroke("#9AA0A8");
+        strokeWeight(1.2 / zoomLevel);
+        line(
+          px,
+          memoGeometry.visibleLineStart,
+          px,
+          toggleY - memoGeometry.buttonRadius,
+        );
+        line(
+          px,
+          toggleY + memoGeometry.buttonRadius,
+          px,
+          memoGeometry.visibleLineEnd,
+        );
+      }
+
+      noStroke();
+      fill("#6B6D72");
+      ellipse(
+        px,
+        toggleY,
+        memoGeometry.buttonDiameter,
+        memoGeometry.buttonDiameter,
+      );
+
+      stroke("#FFFFFF");
+      strokeWeight(2.2 / zoomLevel);
+      noFill();
+      if (memoExpanded) {
+        line(
+          px - 4 / zoomLevel,
+          toggleY + 2 / zoomLevel,
+          px,
+          toggleY - 2 / zoomLevel,
+        );
+        line(
+          px,
+          toggleY - 2 / zoomLevel,
+          px + 4 / zoomLevel,
+          toggleY + 2 / zoomLevel,
+        );
+      } else {
+        line(
+          px - 4 / zoomLevel,
+          toggleY - 2 / zoomLevel,
+          px,
+          toggleY + 2 / zoomLevel,
+        );
+        line(
+          px,
+          toggleY + 2 / zoomLevel,
+          px + 4 / zoomLevel,
+          toggleY - 2 / zoomLevel,
+        );
+      }
+
+      if (memoExpanded) {
+        const memoCardTop = memoGeometry.memoCardTop;
+        const memoWidth = cardWidth - 24;
+        const memoLines = [];
+        let memoLine = "";
+        textSize(10);
+        textStyle(NORMAL);
+        for (const character of Array.from(detailedMemo)) {
+          if (memoLine && textWidth(memoLine + character) > memoWidth) {
+            memoLines.push(memoLine);
+            memoLine = character;
+          } else {
+            memoLine += character;
+          }
+        }
+        if (memoLine) memoLines.push(memoLine);
+
+        const maxMemoLines = 6;
+        const isMemoTruncated = memoLines.length > maxMemoLines;
+        const visibleMemoLines = memoLines.slice(0, maxMemoLines);
+        if (isMemoTruncated) {
+          const lastIndex = visibleMemoLines.length - 1;
+          visibleMemoLines[lastIndex] = fitText(
+            `${visibleMemoLines[lastIndex]}…`,
+            memoWidth,
+          );
+        }
+        const memoCardHeight = Math.max(34, visibleMemoLines.length * 13 + 16);
+        stroke("#D6D9DE");
+        strokeWeight(1 / zoomLevel);
+        fill("#FFFFFF");
+        rectMode(CENTER);
+        rect(
+          px,
+          memoCardTop + memoCardHeight / 2,
+          cardWidth,
+          memoCardHeight,
+          10,
+        );
+        noStroke();
+        fill("#414852");
+        textAlign(LEFT, TOP);
+        textSize(10);
+        textStyle(NORMAL);
+        visibleMemoLines.forEach((lineText, index) => {
+          text(lineText, cardLeft + 12, memoCardTop + 8 + index * 13);
+        });
+        textAlign(CENTER, CENTER);
+      }
     }
   });
 
@@ -1896,20 +2072,19 @@ function onDropdownDelete() {
   if (daysData.length <= 1)
     return alert("최소 1개 이상의 스케줄이 존재해야 합니다.");
 
-  if (confirm(`'${selectedDayForMenu.title}'을 삭제하시겠습니까?`)) {
+  if (
+    confirm(
+      `'${selectedDayForMenu.title}'과 그날의 메모를 함께 삭제하시겠습니까?`,
+    )
+  ) {
     const targetId = selectedDayForMenu.id;
     const fallbackDayId =
       daysData[0].id === targetId ? daysData[1].id : daysData[0].id;
-    spots.forEach((s) => {
-      if (Number(s.day) === Number(targetId)) {
-        s.day = fallbackDayId;
-        s.dist = null;
-        s.travelMinutes = null;
-        s.baseDistanceKm = null;
-        s.baseTravelMinutes = null;
-        s.routeStatus = "needs-update";
-      }
-    });
+    // 삭제한 Day에 속한 메모도 함께 삭제합니다.
+    spots
+      .filter((s) => Number(s.day) === Number(targetId))
+      .forEach((s) => expandedMemoSpotIds.delete(s.id));
+    spots = spots.filter((s) => Number(s.day) !== Number(targetId));
 
     daysData = daysData.filter((d) => d.id !== targetId);
     delete baseInfosByDay[String(targetId)];
@@ -2026,54 +2201,58 @@ function handleStart(x, y) {
   }
 }
 
-// 아이패드용 더블탭: p5 터치 이벤트 대신 브라우저 pointer 이벤트로 직접 감지
+// Use native pointer events for iPad double taps. p5's touch callbacks still
+// handle single taps and dragging; this listener only recognizes the second tap.
 function setupNativeDoubleTap(canvasEl) {
-  // 사파리의 더블탭 확대와 기본 제스처가 터치를 끊지 못하게 막음
   canvasEl.style.touchAction = "none";
 
-  const isFingerOrPen = (e) =>
-    e.pointerType === "touch" || e.pointerType === "pen";
+  const isFingerOrPen = (event) =>
+    event.pointerType === "touch" || event.pointerType === "pen";
 
-  canvasEl.addEventListener("pointerdown", (e) => {
-    if (!isFingerOrPen(e)) return;
+  canvasEl.addEventListener("pointerdown", (event) => {
+    if (!isFingerOrPen(event)) return;
     const rect = canvasEl.getBoundingClientRect();
     nativeDown = {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
       time: Date.now(),
     };
   });
 
-  canvasEl.addEventListener("pointerup", (e) => {
-    if (!isFingerOrPen(e) || !nativeDown) return;
+  canvasEl.addEventListener("pointerup", (event) => {
+    if (!isFingerOrPen(event) || !nativeDown) return;
     const rect = canvasEl.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
     const down = nativeDown;
     nativeDown = null;
 
-    if (isAnyOverlayOpen()) return;
-
-    // 손가락이 움직였으면 탭이 아니라 드래그
-    if (dist(down.x, down.y, x, y) >= 10) {
+    if (isAnyOverlayOpen() || dist(down.x, down.y, x, y) >= 10) {
       nativeLastTap = null;
       return;
     }
 
-    const spot = findSpotAtCanvasPosition(x, y, { includePin: true });
+    // The memo's V button has its own action; don't treat it as a route tap.
+    if (findMemoToggleSpotAtCanvasPosition(x, y)) {
+      nativeLastTap = null;
+      return;
+    }
+
+    // Route double taps are on the memo card body. A pin tap remains an edit tap.
+    const spot = findSpotAtCanvasPosition(x, y);
     if (!spot) {
       nativeLastTap = null;
       return;
     }
 
-    const isDouble =
+    const isDoubleTap =
       nativeLastTap &&
       nativeLastTap.spotId === spot.id &&
       down.time - nativeLastTap.startTime < 450 &&
       dist(x, y, nativeLastTap.x, nativeLastTap.y) < 30 &&
       Date.now() - lastDoubleTapAt > 400;
 
-    if (isDouble) {
+    if (isDoubleTap) {
       if (clickTimer) {
         clearTimeout(clickTimer);
         clickTimer = null;
@@ -2088,7 +2267,6 @@ function setupNativeDoubleTap(canvasEl) {
   });
 }
 
-// 터치 직후 700ms 안에 들어오는 마우스 이벤트는 터치가 만든 가짜 이벤트로 보고 무시
 function isTouchRecently() {
   return Date.now() - lastTouchActivityAt < 700;
 }
@@ -2097,7 +2275,21 @@ function mouseReleased() {
   if (isTouchRecently()) return;
   if (Date.now() - lastDoubleTapAt < 500) return;
 
+  // iPad can emit a synthetic mouse release after a touch; let touchEnded own it.
   const moveDistance = dist(pressStartX, pressStartY, mouseX, mouseY);
+
+  if (moveDistance < 8) {
+    const memoToggleSpot = findMemoToggleSpotAtCanvasPosition(mouseX, mouseY);
+    if (memoToggleSpot) {
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = null;
+      }
+      toggleDetailedMemo(memoToggleSpot);
+      handleEnd();
+      return;
+    }
+  }
 
   if (draggedSpot && moveDistance < 5) {
     const spotToOpen = draggedSpot;
@@ -2106,7 +2298,7 @@ function mouseReleased() {
     clickTimer = setTimeout(() => {
       openMemoModal(spotToOpen);
       clickTimer = null;
-    }, 220);
+    }, 500);
   } else {
     if (clickTimer) {
       clearTimeout(clickTimer);
@@ -2143,14 +2335,18 @@ function openMemoModal(spot) {
   );
   catBadge.style.color = "#1a1a1a";
 
-  document.getElementById("modal-spot-title").innerText =
-    currentEditingSpot.name;
-  document.getElementById("modal-spot-sub").innerText = "장소 정보 수정";
-
+  const nameInput = document.getElementById("modal-name-input");
+  if (nameInput) {
+    nameInput.value = currentEditingSpot.name || "";
+  } else {
+    // 구버전 HTML과 함께 열어도 수정 창 자체는 정상적으로 뜨게 합니다.
+    const title = document.getElementById("modal-spot-title");
+    if (title) title.innerText = currentEditingSpot.name || "장소 이름";
+  }
   document.getElementById("modal-memo-text").value =
     currentEditingSpot.memo || "";
   document.getElementById("modal-order-input").value =
-    currentEditingSpot.order || 1;
+    currentEditingSpot.selected ? currentEditingSpot.order || 1 : "";
   document.getElementById("modal-day-select").value =
     currentEditingSpot.day || 1;
   document.getElementById("modal-dist-input").value =
@@ -2197,9 +2393,26 @@ function selectModalColor(hexColor, targetChip) {
 function saveMemoModal() {
   if (!currentEditingSpot) return;
 
+  const nameInput = document.getElementById("modal-name-input");
+  const newName = nameInput
+    ? nameInput.value.trim()
+    : currentEditingSpot.name || "";
+  if (!newName) {
+    alert("핀 이름을 입력해주세요.");
+    return;
+  }
   const newMemo = document.getElementById("modal-memo-text").value;
-  let targetOrder =
-    parseInt(document.getElementById("modal-order-input").value) || 1;
+  const orderInputValue = document
+    .getElementById("modal-order-input")
+    .value.trim();
+  const targetOrder = orderInputValue === "" ? null : Number(orderInputValue);
+  if (
+    targetOrder !== null &&
+    (!Number.isInteger(targetOrder) || targetOrder < 1)
+  ) {
+    alert("코스 방문 순서는 1 이상의 정수로 입력해주세요.");
+    return;
+  }
   let targetDay =
     parseInt(document.getElementById("modal-day-select").value) || 1;
   const distInput = document.getElementById("modal-dist-input").value.trim();
@@ -2221,7 +2434,10 @@ function saveMemoModal() {
     (oldDayBase.name !== newDayBase.name ||
       oldDayBase.address !== newDayBase.address);
 
+  currentEditingSpot.name = newName;
   currentEditingSpot.memo = newMemo;
+  if (!String(newMemo).trim())
+    expandedMemoSpotIds.delete(currentEditingSpot.id);
   currentEditingSpot.day = targetDay;
   currentEditingSpot.dist = dayBaseChanged ? null : targetDist;
   currentEditingSpot.baseDistanceKm = dayBaseChanged ? null : targetDist;
@@ -2244,12 +2460,18 @@ function saveMemoModal() {
     currentEditingSpot.routeStatus = "needs-update";
   }
 
-  changeSpotOrder(currentEditingSpot, targetOrder);
+  currentEditingSpot.selected = targetOrder !== null;
+  if (currentEditingSpot.selected) {
+    changeSpotOrder(currentEditingSpot, targetOrder);
+  } else {
+    currentEditingSpot.order = null;
+  }
   reorderSpots();
   renderDayBarUI();
   renderSidebarDayBarUI();
 
   storeItem("myTripSpots", spots);
+  updateSummaryUI(getSelectedRouteSpots());
   closeMemoModal();
 }
 
@@ -2257,6 +2479,7 @@ function deleteCurrentSpot() {
   if (!currentEditingSpot) return;
 
   if (confirm(`'${currentEditingSpot.name}' 핀을 삭제하시겠습니까?`)) {
+    expandedMemoSpotIds.delete(currentEditingSpot.id);
     spots = spots.filter((s) => s.id !== currentEditingSpot.id);
     reorderSpots();
     storeItem("myTripSpots", spots);
@@ -2545,7 +2768,6 @@ function mousePressed(event) {
   if (isTouchRecently()) return;
   handleStart(mouseX, mouseY);
 }
-
 function mouseDragged() {
   if (isTouchRecently()) return;
   handleMove(mouseX, mouseY);
@@ -2556,11 +2778,11 @@ function touchStarted(event) {
   lastTouchStartAt = Date.now();
   lastTouchActivityAt = lastTouchStartAt;
 
-  // 두 번째 탭이 같은 자리에서 시작되면 첫 탭의 "메모 열기" 예약을 바로 취소
+  // Cancel the pending single-tap editor when the next tap begins on the card.
   if (touches.length > 0 && lastTouchTap && clickTimer) {
     const closeEnough =
       dist(touches[0].x, touches[0].y, lastTouchTap.x, lastTouchTap.y) < 30;
-    if (closeEnough && lastTouchStartAt - lastTouchTap.startTime < 450) {
+    if (closeEnough && lastTouchStartAt - lastTouchTap.time < 450) {
       clearTimeout(clickTimer);
       clickTimer = null;
     }
@@ -2568,14 +2790,12 @@ function touchStarted(event) {
 
   if (touches.length > 0) handleStart(touches[0].x, touches[0].y);
 }
-
 function touchMoved(event) {
   if (isUiEvent(event)) return true;
   lastTouchActivityAt = Date.now();
   if (touches.length > 0) handleMove(touches[0].x, touches[0].y);
   return false;
 }
-
 function touchEnded(event) {
   lastTouchActivityAt = Date.now();
 
@@ -2584,7 +2804,7 @@ function touchEnded(event) {
     return;
   }
 
-  // 방금 pointer 이벤트가 더블탭을 처리했다면 여기서는 아무것도 하지 않음
+  // The native pointer handler already performed the double-tap action.
   if (Date.now() - lastDoubleTapAt < 500) {
     handleEnd();
     return false;
@@ -2597,22 +2817,48 @@ function touchEnded(event) {
   const y = touch && rect ? touch.clientY - rect.top : mouseY;
   const moveDistance = dist(pressStartX, pressStartY, x, y);
 
-  if (moveDistance < 10) {
-    const spotToOpen =
-      draggedSpot || findSpotAtCanvasPosition(x, y, { includePin: true });
+  if (moveDistance < TOUCH_TAP_MOVE_TOLERANCE) {
+    const memoToggleSpot = findMemoToggleSpotAtCanvasPosition(x, y);
+    if (memoToggleSpot) {
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = null;
+      }
+      toggleDetailedMemo(memoToggleSpot);
+      lastTouchTap = null;
+      handleEnd();
+      return false;
+    }
+  }
+
+  if (moveDistance < TOUCH_TAP_MOVE_TOLERANCE) {
+    // A single tap on the pin opens its editor. Only the memo card body
+    // participates in the double-tap gesture for route inclusion.
+    if (draggedSpot) {
+      const pinSpot = draggedSpot;
+      lastTouchTap = null;
+      if (clickTimer) clearTimeout(clickTimer);
+      clickTimer = setTimeout(() => {
+        openMemoModal(pinSpot);
+        clickTimer = null;
+      }, TOUCH_DOUBLE_TAP_WINDOW_MS);
+      handleEnd();
+      return false;
+    }
+
+    const spotToOpen = findSpotAtCanvasPosition(x, y);
     if (!spotToOpen) {
       lastTouchTap = null;
       handleEnd();
       return false;
     }
 
-    // 터치 시작 시각끼리 비교해서, 손가락을 누르고 있던 시간이 판정에 끼지 않게 함
-    const startTime = lastTouchStartAt;
+    const now = Date.now();
     const isDoubleTap =
       lastTouchTap &&
       lastTouchTap.spotId === spotToOpen.id &&
-      startTime - lastTouchTap.startTime < 450 &&
-      dist(x, y, lastTouchTap.x, lastTouchTap.y) < 30;
+      now - lastTouchTap.time < TOUCH_DOUBLE_TAP_WINDOW_MS &&
+      dist(x, y, lastTouchTap.x, lastTouchTap.y) < TOUCH_DOUBLE_TAP_DISTANCE;
 
     if (isDoubleTap) {
       if (clickTimer) {
@@ -2624,16 +2870,17 @@ function touchEnded(event) {
       lastTouchTap = null;
     } else {
       if (clickTimer) clearTimeout(clickTimer);
-      // 두 번째 탭의 시작은 항상 이 예약이 실행되기 전에 도착함
       clickTimer = setTimeout(() => {
         openMemoModal(spotToOpen);
         clickTimer = null;
-      }, 450);
-      lastTouchTap = { spotId: spotToOpen.id, startTime, x, y };
+      }, TOUCH_DOUBLE_TAP_WINDOW_MS);
+      lastTouchTap = { spotId: spotToOpen.id, time: now, x, y };
     }
   } else {
     lastTouchTap = null;
-    if (pressedBase && moveDistance < 10) openBaseModal();
+    if (pressedBase && moveDistance < TOUCH_TAP_MOVE_TOLERANCE) {
+      openBaseModal();
+    }
   }
 
   handleEnd();
@@ -2647,6 +2894,7 @@ function doubleClicked(event) {
   // p5.js may also fire doubleClicked() for touchscreen input.
   // The custom touch handler has already handled that gesture.
   if (isTouchRecently()) return;
+  if (findMemoToggleSpotAtCanvasPosition(mouseX, mouseY)) return;
 
   if (clickTimer) {
     clearTimeout(clickTimer);
@@ -2680,6 +2928,62 @@ function findSpotAtCanvasPosition(x, y, { includePin = false } = {}) {
   }
 
   return null;
+}
+
+function findMemoToggleSpotAtCanvasPosition(x, y) {
+  const worldPos = getTransformedMouse(x, y);
+  const centerX = width / 2;
+  const centerY = height / 2;
+
+  for (let i = spots.length - 1; i >= 0; i--) {
+    const spot = spots[i];
+    if (
+      !isSpotVisible(spot) ||
+      Number(spot.day) !== Number(currentDayFilter) ||
+      !String(spot.memo || "").trim()
+    ) {
+      continue;
+    }
+
+    const point = getSpotPosition(spot, centerX, centerY);
+    const memoGeometry = getMemoToggleGeometry(
+      point.y,
+      expandedMemoSpotIds.has(spot.id),
+    );
+    if (
+      dist(worldPos.x, worldPos.y, point.x, memoGeometry.buttonY) <=
+      16 / zoomLevel
+    ) {
+      return spot;
+    }
+  }
+
+  return null;
+}
+
+function getMemoToggleGeometry(cardTopY, expanded) {
+  const cardBottom = cardTopY + MEMO_CARD_HEIGHT;
+  const memoCardTop = cardTopY + MEMO_DETAIL_TOP_OFFSET;
+  const cardStrokeHalf = 1 / zoomLevel;
+  const memoStrokeHalf = 0.5 / zoomLevel;
+  const linePadding = 2 / zoomLevel;
+  const visibleLineStart = cardBottom + cardStrokeHalf + linePadding;
+  const visibleLineEnd = memoCardTop - memoStrokeHalf - linePadding;
+
+  return {
+    memoCardTop,
+    visibleLineStart,
+    visibleLineEnd,
+    buttonY: expanded ? (visibleLineStart + visibleLineEnd) / 2 : cardBottom,
+    buttonDiameter: 26 / zoomLevel,
+    buttonRadius: 13 / zoomLevel,
+  };
+}
+
+function toggleDetailedMemo(spot) {
+  if (!spot) return;
+  if (expandedMemoSpotIds.has(spot.id)) expandedMemoSpotIds.delete(spot.id);
+  else expandedMemoSpotIds.add(spot.id);
 }
 
 function toggleSpotRoute(spot) {
